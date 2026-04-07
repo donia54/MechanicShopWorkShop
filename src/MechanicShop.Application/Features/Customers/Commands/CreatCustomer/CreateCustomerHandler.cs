@@ -85,7 +85,7 @@ public sealed class CreateCustomerCommandHandler : IRequestHandler<CreateCustome
 	{
 		return await _dbContext.Customers
 			.AnyAsync(
-				customer => customer.Email != null && customer.Email.Trim().ToLower() == normalizedEmail,
+				customer => customer.Email != null && customer.Email == normalizedEmail,
 				cancellationToken);
 	}
 
