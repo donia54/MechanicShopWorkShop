@@ -19,6 +19,9 @@ public static class CustomerErrors
     public static Error CustomerExists =>
         Error.Conflict("Customer_Email_Exists", "A customer with this email already exists.");
 
+    public static Error CustomerNotFound =>
+        Error.Validation("Customer_Not_Found", "Customer was not found.");
+
     public static readonly Error InvalidPhoneNumber =
         Error.Validation("Customer_InvalidPhoneNumber", "Phone number must be 7–15 digits and may start with '+'.");
 
