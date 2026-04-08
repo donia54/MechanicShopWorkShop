@@ -8,14 +8,19 @@ using Microsoft.Extensions.Logging;
 
 namespace MechanicShop.Application.Common.Behaviours;
 
-public class CachingBehavior<TRequest, TResponse>(
-    HybridCache cache,
-    ILogger<CachingBehavior<TRequest, TResponse>> logger)
-    : IPipelineBehavior<TRequest, TResponse>
+public class CachingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {
-    private readonly HybridCache _cache = cache;
-    private readonly ILogger<CachingBehavior<TRequest, TResponse>> _logger = logger;
+    private readonly HybridCache _cache;
+    private readonly ILogger<CachingBehavior<TRequest, TResponse>> _logger;
+
+    public CachingBehavior(
+        HybridCache cache,
+        ILogger<CachingBehavior<TRequest, TResponse>> logger)
+    {
+        _cache = cache;
+        _logger = logger;
+    }
 
     public async Task<TResponse> Handle(
         TRequest request,
@@ -27,37 +32,45 @@ public class CachingBehavior<TRequest, TResponse>(
             return await next(cancellationToken);
         }
 
-        _logger.LogInformation("Checking cache for {RequestName}", typeof(TRequest).Name);
+        var requestName = typeof(TRequest).Name;
+        var cacheHit = true;
 
-        var result = await _cache.GetOrCreateAsync<TResponse>(
+        var cachedResponse = await _cache.GetOrCreateAsync<TResponse>(
             cachedRequest.CacheKey,
-            _ => new ValueTask<TResponse>((TResponse)(object)null!),
+            _ =>
+            {
+                cacheHit = false;
+                return ValueTask.FromResult(default(TResponse)!);
+            },
             new HybridCacheEntryOptions
             {
                 Flags = HybridCacheEntryFlags.DisableUnderlyingData
             },
             cancellationToken: cancellationToken);
 
-        if (result is null)
+        if (cacheHit)
         {
-            result = await next(cancellationToken);
-
-            if (result is IResult res && res.IsSuccess)
-            {
-                _logger.LogInformation("Caching result for {RequestName}", typeof(TRequest).Name);
-
-                await _cache.SetAsync(
-                    cachedRequest.CacheKey,
-                    result,
-                    new HybridCacheEntryOptions
-                    {
-                        Expiration = cachedRequest.Expiration
-                    },
-                    cachedRequest.Tags,
-                    cancellationToken);
-            }
+            _logger.LogInformation("Cache hit for {RequestName} with key {CacheKey}", requestName, cachedRequest.CacheKey);
+            return cachedResponse;
         }
 
-        return result;
+        var response = await next(cancellationToken);
+
+        if (response is IResult result && result.IsSuccess)
+        {
+            _logger.LogInformation("Caching response for {RequestName} with key {CacheKey}", requestName, cachedRequest.CacheKey);
+
+            await _cache.SetAsync(
+                cachedRequest.CacheKey,
+                response,
+                new HybridCacheEntryOptions
+                {
+                    Expiration = cachedRequest.Expiration
+                },
+                cachedRequest.Tags,
+                cancellationToken);
+        }
+
+        return response;
     }
 }
