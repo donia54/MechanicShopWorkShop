@@ -213,44 +213,42 @@ public sealed class WorkOrder : AuditableEntity
         return Result.Updated;
     }
 
-    public Result<Updated> UpdateState(WorkOrderState newState)
+    public Result<Updated> Start()
     {
-        if (!CanTransitionTo(newState))
+        if (State != WorkOrderState.Scheduled)
         {
-            return WorkOrderErrors.InvalidStateTransition(State, newState, Id);
+            return WorkOrderErrors.InvalidStateTransition(State, WorkOrderState.InProgress, Id);
         }
 
-        if (State == WorkOrderState.Scheduled &&
-            newState == WorkOrderState.InProgress &&
-            DateTimeOffset.UtcNow < StartAtUtc)
+        if (DateTimeOffset.UtcNow < StartAtUtc)
         {
             return WorkOrderErrors.TransitionBeforeScheduledStart(StartAtUtc, Id);
         }
 
-        State = newState;
+        State = WorkOrderState.InProgress;
         return Result.Updated;
     }
 
-    public bool CanTransitionTo(WorkOrderState newState)
-        => State switch
+    public Result<Updated> Complete()
+    {
+        if (State != WorkOrderState.InProgress)
         {
-            WorkOrderState.Scheduled =>
-                newState is WorkOrderState.InProgress or WorkOrderState.Cancelled,
-            WorkOrderState.InProgress =>
-                newState is WorkOrderState.Completed or WorkOrderState.Cancelled,
-            WorkOrderState.Completed => false,
-            WorkOrderState.Cancelled => false,
-            _ => false
-        };
+            return WorkOrderErrors.InvalidStateTransition(State, WorkOrderState.Completed, Id);
+        }
+
+        State = WorkOrderState.Completed;
+        return Result.Updated;
+    }
 
     public Result<Updated> Cancel()
     {
-        if (State == WorkOrderState.Completed)
+        if (State is not WorkOrderState.Scheduled and not WorkOrderState.InProgress)
         {
             return WorkOrderErrors.InvalidStateTransition(State, WorkOrderState.Cancelled, Id);
         }
 
-        return UpdateState(WorkOrderState.Cancelled);
+        State = WorkOrderState.Cancelled;
+        return Result.Updated;
     }
 
 }

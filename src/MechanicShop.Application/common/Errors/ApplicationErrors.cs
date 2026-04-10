@@ -63,6 +63,13 @@ public static class ApplicationErrors
             description: $"RepairTask '{repairTaskId}' was not found.");
     }
 
+    public static class Labor
+    {
+        public static Error NotFound(Guid laborId) => Error.NotFound(
+            code: "ApplicationErrors.Labor.NotFound",
+            description: $"Labor '{laborId}' was not found.");
+    }
+
     public static class Invoice
     {
         public static Error NotFound(Guid invoiceId) => Error.NotFound(
