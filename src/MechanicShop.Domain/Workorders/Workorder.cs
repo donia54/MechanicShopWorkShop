@@ -43,6 +43,22 @@ public sealed class WorkOrder : AuditableEntity
 
     public IReadOnlyList<RepairTask> RepairTasks => _repairTasks.AsReadOnly();
 
+    public TimeSpan GetDuration()
+    {
+        if (EndAtUtc.HasValue && EndAtUtc.Value > StartAtUtc)
+        {
+            return EndAtUtc.Value - StartAtUtc;
+        }
+
+        var totalEstimatedMinutes = _repairTasks.Sum(task => (int)task.EstimatedDurationInMins);
+        if (totalEstimatedMinutes <= 0)
+        {
+            totalEstimatedMinutes = 15;
+        }
+
+        return TimeSpan.FromMinutes(totalEstimatedMinutes);
+    }
+
 
     private WorkOrder()
     { }

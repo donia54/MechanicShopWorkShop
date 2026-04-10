@@ -7,6 +7,7 @@ public sealed class RelocateWorkOrderCommandValidator : AbstractValidator<Reloca
 	public RelocateWorkOrderCommandValidator()
 	{
 		RuleFor(x => x.WorkOrderId).NotEmpty();
+		RuleFor(x => x.NewStartAt).NotEmpty();
 		RuleFor(x => x.NewSpot).IsInEnum();
 	}
 }

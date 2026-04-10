@@ -1,6 +1,7 @@
 using MechanicShop.Application.Common.Errors;
 using MechanicShop.Application.Common.Interfaces;
 using MechanicShop.Domain.Common.Results;
+using MechanicShop.Domain.WorkOrders.Events;
 
 using MediatR;
 
@@ -15,56 +16,129 @@ public sealed class RelocateWorkOrderCommandHandler : IRequestHandler<RelocateWo
 	private const string WorkOrderCacheTag = "workorder";
 
 	private readonly IAppDbContext _dbContext;
-	private readonly IWorkOrderPolicy _workOrderPolicy;
+	private readonly IWorkOrderPolicy _policy;
 	private readonly ILogger<RelocateWorkOrderCommandHandler> _logger;
 	private readonly HybridCache _cache;
 
 	public RelocateWorkOrderCommandHandler(
 		IAppDbContext dbContext,
-		IWorkOrderPolicy workOrderPolicy,
+		IWorkOrderPolicy policy,
 		ILogger<RelocateWorkOrderCommandHandler> logger,
 		HybridCache cache)
 	{
 		_dbContext = dbContext;
-		_workOrderPolicy = workOrderPolicy;
+		_policy = policy;
 		_logger = logger;
 		_cache = cache;
 	}
 
 	public async Task<Result<Updated>> Handle(RelocateWorkOrderCommand request, CancellationToken cancellationToken)
 	{
-		var workOrder = await _dbContext.WorkOrders.FirstOrDefaultAsync(order => order.Id == request.WorkOrderId, cancellationToken);
+		var workOrder = await _dbContext.WorkOrders
+			.Include(order => order.RepairTasks)
+			.FirstOrDefaultAsync(order => order.Id == request.WorkOrderId, cancellationToken);
+
 		if (workOrder is null)
 		{
 			_logger.LogWarning("Relocate workorder failed. WorkOrder not found: {WorkOrderId}", request.WorkOrderId);
 			return ApplicationErrors.WorkOrder.NotFound(request.WorkOrderId);
 		}
 
-		var endAtUtc = workOrder.EndAtUtc ?? workOrder.StartAtUtc;
-		var spotAvailabilityResult = await _workOrderPolicy.CheckSpotAvailabilityAsync(
+		var duration = workOrder.GetDuration();
+		var newStartAtUtc = request.NewStartAt;
+		var newEndAtUtc = newStartAtUtc.Add(duration);
+
+		var schedulingValidationResult = await _policy.ValidateSchedulingAsync(
+			workOrder.LaborId,
+			workOrder.VehicleId,
 			request.NewSpot,
-			workOrder.StartAtUtc,
-			endAtUtc,
+			newStartAtUtc,
+			newEndAtUtc,
 			excludeWorkOrderId: workOrder.Id,
 			ct: cancellationToken);
 
-		if (spotAvailabilityResult.IsError)
+		if (schedulingValidationResult.IsError)
 		{
-			_logger.LogInformation("Relocate workorder failed. Spot is not available. WorkOrderId: {WorkOrderId}, Spot: {Spot}", request.WorkOrderId, request.NewSpot);
-			return spotAvailabilityResult.Errors;
+			LogSchedulingValidationFailure(request, workOrder, newStartAtUtc, newEndAtUtc, schedulingValidationResult.TopError.Code);
+			return schedulingValidationResult.Errors;
+		}
+
+		var timingResult = workOrder.UpdateTiming(newStartAtUtc, newEndAtUtc);
+		if (timingResult.IsError)
+		{
+			_logger.LogInformation("Reschedule workorder failed during timing update. WorkOrderId: {WorkOrderId}", request.WorkOrderId);
+			return timingResult.Errors;
 		}
 
 		var relocateResult = workOrder.UpdateSpot(request.NewSpot);
 		if (relocateResult.IsError)
 		{
-			_logger.LogInformation("Relocate workorder business validation failed. WorkOrderId: {WorkOrderId}", request.WorkOrderId);
+			_logger.LogInformation("Reschedule workorder failed during spot update. WorkOrderId: {WorkOrderId}, Spot: {Spot}", request.WorkOrderId, request.NewSpot);
 			return relocateResult.Errors;
 		}
 
+		workOrder.AddDomainEvent(new WorkOrderCollectionModified(workOrder.Id, DateTimeOffset.UtcNow));
+
 		await _dbContext.SaveChangesAsync(cancellationToken);
 		await _cache.RemoveByTagAsync(WorkOrderCacheTag, cancellationToken: cancellationToken);
-		_logger.LogInformation("Workorder relocated successfully. WorkOrderId: {WorkOrderId}, Spot: {Spot}", request.WorkOrderId, request.NewSpot);
+		_logger.LogInformation(
+			"Workorder rescheduled successfully. WorkOrderId: {WorkOrderId}, StartAtUtc: {StartAtUtc}, EndAtUtc: {EndAtUtc}, Spot: {Spot}",
+			request.WorkOrderId,
+			newStartAtUtc,
+			newEndAtUtc,
+			request.NewSpot);
 
 		return Result.Updated;
+	}
+
+	private void LogSchedulingValidationFailure(
+		RelocateWorkOrderCommand request,
+		Domain.WorkOrders.WorkOrder workOrder,
+		DateTimeOffset newStartAtUtc,
+		DateTimeOffset newEndAtUtc,
+		string errorCode)
+	{
+		if (errorCode.Contains("ServiceBayDoubleBooked", StringComparison.OrdinalIgnoreCase)
+			|| errorCode.Contains("SpotDoubleBooked", StringComparison.OrdinalIgnoreCase))
+		{
+			_logger.LogInformation(
+				"Reschedule workorder failed due to spot conflict. WorkOrderId: {WorkOrderId}, Spot: {Spot}, StartAtUtc: {StartAtUtc}, EndAtUtc: {EndAtUtc}",
+				request.WorkOrderId,
+				request.NewSpot,
+				newStartAtUtc,
+				newEndAtUtc);
+			return;
+		}
+
+		if (errorCode.Contains("TechnicianDoubleBooked", StringComparison.OrdinalIgnoreCase)
+			|| errorCode.Contains("Labor", StringComparison.OrdinalIgnoreCase))
+		{
+			_logger.LogInformation(
+				"Reschedule workorder failed due to labor conflict. WorkOrderId: {WorkOrderId}, LaborId: {LaborId}, StartAtUtc: {StartAtUtc}, EndAtUtc: {EndAtUtc}",
+				request.WorkOrderId,
+				workOrder.LaborId,
+				newStartAtUtc,
+				newEndAtUtc);
+			return;
+		}
+
+		if (errorCode.Contains("VehicleSchedulingConflict", StringComparison.OrdinalIgnoreCase)
+			|| errorCode.Contains("Vehicle", StringComparison.OrdinalIgnoreCase))
+		{
+			_logger.LogInformation(
+				"Reschedule workorder failed due to vehicle conflict. WorkOrderId: {WorkOrderId}, VehicleId: {VehicleId}, StartAtUtc: {StartAtUtc}, EndAtUtc: {EndAtUtc}",
+				request.WorkOrderId,
+				workOrder.VehicleId,
+				newStartAtUtc,
+				newEndAtUtc);
+			return;
+		}
+
+		_logger.LogInformation(
+			"Reschedule workorder failed due to scheduling validation. WorkOrderId: {WorkOrderId}, StartAtUtc: {StartAtUtc}, EndAtUtc: {EndAtUtc}, ErrorCode: {ErrorCode}",
+			request.WorkOrderId,
+			newStartAtUtc,
+			newEndAtUtc,
+			errorCode);
 	}
 }
