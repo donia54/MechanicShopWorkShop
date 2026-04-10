@@ -1,7 +1,6 @@
 using MechanicShop.Application.Common.Errors;
 using MechanicShop.Application.Common.Interfaces;
 using MechanicShop.Domain.Common.Results;
-using MechanicShop.Domain.WorkOrders.Events;
 
 using MediatR;
 
@@ -63,21 +62,12 @@ public sealed class RelocateWorkOrderCommandHandler : IRequestHandler<RelocateWo
 			return schedulingValidationResult.Errors;
 		}
 
-		var timingResult = workOrder.UpdateTiming(newStartAtUtc, newEndAtUtc);
-		if (timingResult.IsError)
-		{
-			_logger.LogInformation("Reschedule workorder failed during timing update. WorkOrderId: {WorkOrderId}", request.WorkOrderId);
-			return timingResult.Errors;
-		}
-
-		var relocateResult = workOrder.UpdateSpot(request.NewSpot);
+		var relocateResult = workOrder.Relocate(newStartAtUtc, newEndAtUtc, request.NewSpot);
 		if (relocateResult.IsError)
 		{
-			_logger.LogInformation("Reschedule workorder failed during spot update. WorkOrderId: {WorkOrderId}, Spot: {Spot}", request.WorkOrderId, request.NewSpot);
+			_logger.LogInformation("Reschedule workorder failed during domain relocate. WorkOrderId: {WorkOrderId}, Spot: {Spot}", request.WorkOrderId, request.NewSpot);
 			return relocateResult.Errors;
 		}
-
-		workOrder.AddDomainEvent(new WorkOrderCollectionModified(workOrder.Id, DateTimeOffset.UtcNow));
 
 		await _dbContext.SaveChangesAsync(cancellationToken);
 		await _cache.RemoveByTagAsync(WorkOrderCacheTag, cancellationToken: cancellationToken);

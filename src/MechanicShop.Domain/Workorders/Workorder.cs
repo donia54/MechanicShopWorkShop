@@ -5,6 +5,7 @@ using MechanicShop.Domain.Employees;
 using MechanicShop.Domain.RepairTasks;
 using MechanicShop.Domain.WorkOrders.Billing;
 using MechanicShop.Domain.WorkOrders.Enums;
+using MechanicShop.Domain.WorkOrders.Events;
 
 
 namespace MechanicShop.Domain.WorkOrders;
@@ -166,10 +167,11 @@ public sealed class WorkOrder : AuditableEntity
         }
 
         _repairTasks.Add(task);
+        MarkCollectionModified();
         return Result.Updated;
     }
 
-    public Result<Updated> UpdateTiming(DateTimeOffset startAtUtc, DateTimeOffset? endAtUtc)
+    public Result<Updated> UpdateTiming(DateTimeOffset startAtUtc, DateTimeOffset? endAtUtc, bool markCollectionModified = true)
     {
         if (!IsEditable)
         {
@@ -183,6 +185,12 @@ public sealed class WorkOrder : AuditableEntity
 
         StartAtUtc = startAtUtc;
         EndAtUtc = endAtUtc;
+
+        if (markCollectionModified)
+        {
+            MarkCollectionModified();
+        }
+
         return Result.Updated;
     }
 
@@ -199,10 +207,11 @@ public sealed class WorkOrder : AuditableEntity
         }
 
         LaborId = laborId;
+        MarkCollectionModified();
         return Result.Updated;
     }
 
-    public Result<Updated> UpdateSpot(Spot spot)
+    public Result<Updated> UpdateSpot(Spot spot, bool markCollectionModified = true)
     {
         if (!IsEditable)
         {
@@ -215,6 +224,12 @@ public sealed class WorkOrder : AuditableEntity
         }
 
         Spot = spot;
+
+        if (markCollectionModified)
+        {
+            MarkCollectionModified();
+        }
+
         return Result.Updated;
     }
 
@@ -226,6 +241,7 @@ public sealed class WorkOrder : AuditableEntity
         }
 
         _repairTasks.Clear();
+        MarkCollectionModified();
         return Result.Updated;
     }
 
@@ -242,6 +258,9 @@ public sealed class WorkOrder : AuditableEntity
         }
 
         State = WorkOrderState.InProgress;
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        AddDomainEvent(new WorkOrderStarted(Id, occurredAtUtc));
+        MarkCollectionModified(occurredAtUtc);
         return Result.Updated;
     }
 
@@ -253,6 +272,9 @@ public sealed class WorkOrder : AuditableEntity
         }
 
         State = WorkOrderState.Completed;
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        AddDomainEvent(new WorkOrderCompleted(Id, occurredAtUtc));
+        MarkCollectionModified(occurredAtUtc);
         return Result.Updated;
     }
 
@@ -264,7 +286,47 @@ public sealed class WorkOrder : AuditableEntity
         }
 
         State = WorkOrderState.Cancelled;
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        AddDomainEvent(new WorkOrderCancelled(Id, occurredAtUtc));
+        MarkCollectionModified(occurredAtUtc);
         return Result.Updated;
+    }
+
+    public Result<Updated> Relocate(DateTimeOffset startAtUtc, DateTimeOffset? endAtUtc, Spot spot)
+    {
+        if (!endAtUtc.HasValue)
+        {
+            return WorkOrderErrors.EndTimeMustBeAfterStartTime;
+        }
+
+        var validatedEndAtUtc = endAtUtc.Value;
+
+        var timingResult = UpdateTiming(startAtUtc, validatedEndAtUtc, markCollectionModified: false);
+        if (timingResult.IsError)
+        {
+            return timingResult;
+        }
+
+        var spotResult = UpdateSpot(spot, markCollectionModified: false);
+        if (spotResult.IsError)
+        {
+            return spotResult;
+        }
+
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        AddDomainEvent(new WorkOrderRelocated(Id, StartAtUtc, validatedEndAtUtc, Spot, occurredAtUtc));
+        MarkCollectionModified(occurredAtUtc);
+        return Result.Updated;
+    }
+
+    private void MarkCollectionModified()
+    {
+        MarkCollectionModified(DateTimeOffset.UtcNow);
+    }
+
+    private void MarkCollectionModified(DateTimeOffset occurredAtUtc)
+    {
+        AddDomainEvent(new WorkOrderCollectionModified(Id, occurredAtUtc));
     }
 
 }

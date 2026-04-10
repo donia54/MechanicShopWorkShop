@@ -1,6 +1,8 @@
 using MechanicShop.Application.Common.Errors;
 using MechanicShop.Application.Common.Interfaces;
+using MechanicShop.Application.Features.WorkOrders.EventHandlers;
 using MechanicShop.Domain.Common.Results;
+using MechanicShop.Domain.WorkOrders.Events;
 
 using MediatR;
 
@@ -14,15 +16,18 @@ public sealed class CompleteWorkOrderCommandHandler : IRequestHandler<CompleteWo
 {
 	private const string WorkOrderCacheTag = "workorder";
 	private readonly IAppDbContext _dbContext;
+	private readonly SendWorkOrderCompletedEmailHandler _sendWorkOrderCompletedEmailHandler;
 	private readonly ILogger<CompleteWorkOrderCommandHandler> _logger;
 	private readonly HybridCache _cache;
 
 	public CompleteWorkOrderCommandHandler(
 		IAppDbContext dbContext,
+		SendWorkOrderCompletedEmailHandler sendWorkOrderCompletedEmailHandler,
 		ILogger<CompleteWorkOrderCommandHandler> logger,
 		HybridCache cache)
 	{
 		_dbContext = dbContext;
+		_sendWorkOrderCompletedEmailHandler = sendWorkOrderCompletedEmailHandler;
 		_logger = logger;
 		_cache = cache;
 	}
@@ -45,6 +50,7 @@ public sealed class CompleteWorkOrderCommandHandler : IRequestHandler<CompleteWo
 
 		await _dbContext.SaveChangesAsync(cancellationToken);
 		await _cache.RemoveByTagAsync(WorkOrderCacheTag, cancellationToken: cancellationToken);
+		await _sendWorkOrderCompletedEmailHandler.Handle(new WorkOrderCompleted(workOrder.Id, DateTimeOffset.UtcNow), cancellationToken);
 		_logger.LogInformation("Workorder completed successfully. WorkOrderId: {WorkOrderId}", request.WorkOrderId);
 
 		return Result.Updated;
