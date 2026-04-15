@@ -9,4 +9,5 @@ internal static class WorkOrderQueryCacheConstants
 	public const string GetAvailableSlotsCacheKeyPrefix = "workorders:scheduling:slots";
 	public const string GetDailyScheduleCacheKeyPrefix = "workorders:scheduling:daily";
 	public const string GetLaborScheduleCacheKeyPrefix = "workorders:scheduling:labor";
+	public const string GetAvailableLaborsCacheKeyPrefix = "workorders:labor:available";
 }
