@@ -1,4 +1,7 @@
 using MechanicShop.Application.Features.WorkOrders.Dtos;
+using MechanicShop.Application.Features.WorkOrders.RepairTasks.Dtos;
+using MechanicShop.Application.Features.WorkOrders.Scheduling.Dtos;
+using MechanicShop.Domain.RepairTasks;
 using MechanicShop.Domain.WorkOrders;
 
 namespace MechanicShop.Application.Features.WorkOrders.Mappers;
@@ -65,5 +68,32 @@ public static class WorkOrderMapper
 							part.Cost * part.Quantity))
 						.ToList()))
 				.ToList());
+	}
+
+	public static RepairTaskDto ToRepairTaskDto(this RepairTask repairTask)
+	{
+		return new RepairTaskDto(
+			repairTask.Id,
+			repairTask.Name ?? string.Empty,
+			repairTask.LaborCost,
+			(int)repairTask.EstimatedDurationInMins,
+			repairTask.Parts
+				.Select(part => new PartDto(
+					part.Id,
+					part.Name,
+					part.Cost,
+					part.Quantity))
+				.ToList());
+	}
+
+	public static ScheduleItemDto ToScheduleItemDto(this WorkOrder workOrder)
+	{
+		return new ScheduleItemDto(
+			workOrder.Id,
+			workOrder.StartAtUtc,
+			workOrder.EndAtUtc,
+			workOrder.Labor?.FullName ?? string.Empty,
+			workOrder.Vehicle?.VehicleInfo ?? string.Empty,
+			workOrder.State.ToString());
 	}
 }
