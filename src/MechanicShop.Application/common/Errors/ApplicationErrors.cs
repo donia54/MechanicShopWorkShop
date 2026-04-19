@@ -76,6 +76,10 @@ public static class ApplicationErrors
             code: "ApplicationErrors.Invoice.NotFound",
             description: $"Invoice '{invoiceId}' was not found.");
 
+        public static readonly Error AlreadyPaid = Error.Conflict(
+            code: "ApplicationErrors.Invoice.AlreadyPaid",
+            description: "Invoice is already paid.");
+
         public static Error CannotGenerateUnlessWorkOrderCompleted(Guid workOrderId, string currentStatus) => Error.Conflict(
             code: "ApplicationErrors.Invoice.CannotGenerateUnlessWorkOrderCompleted",
             description: $"Cannot generate invoice for WorkOrder '{workOrderId}' because current status is '{currentStatus}', not 'Completed'.");
